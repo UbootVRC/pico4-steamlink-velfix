@@ -10,6 +10,12 @@ firmware-side analysis (now mostly moot).
 All findings are from static analysis of extracted firmware/app binaries plus on-device testing.
 No proprietary code is reproduced — only symbol names, offsets, behavior, and measurements.
 
+The root-cause measurements and the original app-side fix come from an independent investigation,
+published as a report: <https://github.com/ClaikoCode/Pico4e_steamlink_wobble_gaze_fix_report>. That work was done on a **Pico 4 Enterprise** (firmware 5.13.8, Steam
+Link 2.0.24). The Zygisk module in this repo was tested on a **base Pico 4** (A8110, firmware 5.13.7,
+Steam Link 2.0.25). Where this document and the report disagree, prefer the report: it is the primary
+source for the measurements.
+
 ---
 
 ## 1. Symptom
@@ -45,11 +51,16 @@ This corrects a wording both earlier analyses used ("velocity fails to follow th
 firmware shows the opposite — the **velocity follows the recenter and the pose does not**. Same-size
 mismatch, opposite attribution.
 
-**What is NOT fixed by any of this:** a milder wobble is present even on a **fresh boot with no
-recenter** (both patched and unpatched scored similarly there). That residual is likely inherent to
-Steam Link's prediction pipeline — it is the only PCVR streamer using a quad-views rendering
-approach, and even the *fixed* Pico 4 Ultra and the Quest 3 still show some bounce/warp. Lowering the
-PC-side **HMD prediction latency to 0** helps the mild cases but not the strong post-recenter one.
+**The error is present before any user recenter.** The report measured a velocity-direction error of
+9.7° to 57° at the start of three sessions, before the user recentered, because Pico resets tracking
+on its own around start-up. A user recenter then changes the error by the recenter yaw. Part of the
+error (a per-session constant) has no known cause.
+
+**What may not be fixed:** a milder wobble is present even on a **fresh boot with no recenter**. In
+the blind test of an earlier workaround, patched and unpatched scored similarly there. Whether that
+residual comes from the smaller start-of-session velocity error, from Steam Link's own prediction
+pipeline, or both is **not established**. Lowering the PC-side **HMD prediction latency to 0** helps
+the mild cases but not the strong post-recenter one.
 
 ---
 
@@ -141,17 +152,19 @@ issue that can be corrected without touching firmware.
 
 1. **Working without root:** the Steam Link APK byte-patch (derived35 approach). Downside: must be re-done
    per Steam Link version, and it's shared as a recipe (contains Valve's app). A separate variant
-   also fixes an eye-tracking/foveation bug (eye position reported in the wrong frame on head tilt;
-   fix = use gaze rotation only).
+   also fixes an eye-tracking/foveation bug (eye position reported far from the head on head tilt;
+   fix = use gaze direction only). The exact patches are in the report's `CHANGES.md`.
 2. **Version-independent module (recommended if rooted):** a Zygisk module that applies the same
    derived-velocity fix to official Steam Link at the OpenXR layer. Works on 2.0.25; needs root with
-   Zygisk but no APK changes and no per-version rework (see §4).
+   Zygisk but no APK changes and no per-version rework (see §4). From v1.2 it also applies the
+   gaze-direction-only fix for headsets with eye tracking.
 3. **Alternative streamer:** Virtual Desktop or ALVR do their own head-pose prediction and don't use
    Steam Link's quad-views path, so they may avoid this entirely — the most likely route to a good
    experience without per-version patching.
-4. **Residual mild wobble** (fresh boot) and a possible new stutter appear inherent to Steam Link's
-   prediction/quad-views pipeline and aren't fixed by the velocity correction; PC-side HMD prediction
-   = 0 helps the mild cases only.
+4. **Residual mild wobble** (fresh boot) and a possible slight stutter on fast head movement: the
+   cause of each is not established (see §2). PC-side HMD prediction = 0 helps the mild cases only.
+5. **Other Pico models:** on the Pico 4 Pro and Ultra, Steam Link adds a head-offset term to the
+   linear velocity after reading it, so a derived velocity may count that offset twice. Untested.
 
 ---
 
@@ -183,6 +196,5 @@ issue that can be corrected without touching firmware.
   with a position-derived one. A per-version Steam Link byte-patch does this and removes the strong
   post-recenter wobble (blind-tested). A version-independent Zygisk module does the same on the
   official app with no APK changes, and is the better delivery for rooted headsets.
-- The mild fresh-boot wobble and quad-views prediction behavior appear to be **Steam Link-side** and
-  aren't addressed by the velocity fix; a different streamer (Virtual Desktop / ALVR) is the simplest
+- The mild fresh-boot wobble is not clearly improved and its cause is not established; a different streamer (Virtual Desktop / ALVR) is the simplest
   path to avoid the whole thing. A true in-headset fix needs Pico firmware.

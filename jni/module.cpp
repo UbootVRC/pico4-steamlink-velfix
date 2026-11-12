@@ -13,11 +13,15 @@
 // layer instead of by patching Steam Link's bytes -- so it survives Steam Link updates and needs no
 // APK modification (install official Steam Link, enable this module).
 //
-// Tunable via /data/local/tmp/pico4velfix-corr = "mode window_ms":
-//   (file absent / default) = mode 1, 35 ms   (the fix, on)
-//   "0"      = off / passthrough (for A/B)
-//   "1 35"   = derive linear velocity over 35 ms   (try 35..40)
-//   "2"      = zero linear velocity (comparison)
+// It also corrects the eye-gaze position Steam Link uses for foveation on headsets with eye tracking
+// (see wrap_ls below).
+//
+// Tunable via /data/local/tmp/pico4velfix-corr = "mode window_ms gaze":
+//   (file absent / default) = "1 35 1"   (velocity fix on, 35 ms window, gaze fix on)
+//   "0"        = velocity fix off / passthrough (for A/B)
+//   "1 35"     = derive linear velocity over 35 ms   (try 35..40)
+//   "2"        = zero linear velocity (comparison)
+//   "1 35 0"   = velocity fix on, gaze fix off
 // Scoped strictly to the Steam Link process; never touches Pico system/tracking.
 
 #include <cstdint>
@@ -57,6 +61,8 @@ struct XrSpaceVelocity { int32_t type; int32_t _p; void *next; uint64_t flags; V
 // matched, so the head locate was passed through untouched.
 static constexpr int XR_TYPE_SPACE_VELOCITY = 43;
 static constexpr uint64_t XR_SPACE_VELOCITY_LINEAR_VALID = 0x1;
+// XR_EXT_eye_gaze_interaction: Steam Link chains this onto its eye-gaze locate.
+static constexpr int XR_TYPE_EYE_GAZE_SAMPLE_TIME_EXT = 1000030001;
 // XrReferenceSpaceCreateInfo: referenceSpaceType @16
 static constexpr uintptr_t RSCI_TYPE = 16;
 
@@ -80,19 +86,25 @@ static void *find_in_chain(void *next, int type) {
     return nullptr;
 }
 
-// ---- tunable params: default ON (mode 1, 35 ms window) ----
-static int g_mode = 1; static float g_win = 35.f;
+// ---- tunable params: default ON (velocity mode 1, 35 ms window, gaze fix on) ----
+static int g_mode = 1; static float g_win = 35.f; static int g_gaze = 1;
 static void read_params() {
-    g_mode = 1; g_win = 35.f;                          // defaults when file is absent/empty
+    int m = 1, gz = 1; float w = 35.f;                 // defaults when file is absent/empty
     int fd = open("/data/local/tmp/pico4velfix-corr", O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return;
-    char b[64] = {}; ssize_t n = read(fd, b, sizeof(b) - 1); close(fd);
-    if (n <= 0) return;
-    float w = 0; int m = 1;
-    int got = sscanf(b, "%d %f", &m, &w);
-    if (got >= 1) g_mode = m;
-    if (got >= 2 && w > 0) g_win = w;
-    if (g_win < 5.f) g_win = 5.f; if (g_win > 60.f) g_win = 60.f;
+    if (fd >= 0) {
+        char b[64] = {}; ssize_t n = read(fd, b, sizeof(b) - 1); close(fd);
+        if (n > 0) {
+            int pm = 1, pg = 1; float pw = 0;
+            int got = sscanf(b, "%d %f %d", &pm, &pw, &pg);
+            if (got >= 1) m = pm;
+            if (got >= 2 && pw > 0) w = pw;
+            if (got >= 3) gz = pg;
+        }
+    }
+    if (w < 5.f) w = 5.f; if (w > 60.f) w = 60.f;
+    if (m != g_mode || w != g_win || gz != g_gaze)
+        LOGI("config: velocity mode=%d window=%.0fms gaze=%d", m, w, gz);
+    g_mode = m; g_win = w; g_gaze = gz;
 }
 
 // Label the reference spaces so we can recognize the head (VIEW) locate. (VIEW=1, LOCAL=2, STAGE=3)
@@ -108,32 +120,50 @@ static XrResult wrap_crs(void *s, const void *ci, uint64_t *out) {
     return r;
 }
 
-// The head pose+velocity Steam Link forwards to the PC comes through here. Replace the (wrong-frame)
-// linear velocity with one derived from positions, in whatever base space the app requested (so it is
-// correct regardless of recenter). Pose and angular velocity are left exactly as the runtime gave them.
+// Every xrLocateSpace Steam Link makes comes through here. Two corrections, both only ever applied
+// to Steam Link's own reads:
+//
+//  1. Head velocity. For the head (VIEW) locate with an XrSpaceVelocity chained, replace the
+//     (wrong-frame) linear velocity with one derived from positions, in whatever base space the app
+//     requested. Pose and angular velocity are left exactly as the runtime gave them.
+//
+//  2. Eye gaze (headsets with eye tracking). The runtime reports the eye-gaze pose with a position
+//     that can sit far from the head when the head tilts, and Steam Link aims foveation at a point
+//     1 m along the gaze from that position. Replace the eye position with the head position at the
+//     same time in the same base space, so only the gaze direction is used. The eye-gaze locate is
+//     recognized by the XrEyeGazeSampleTimeEXT struct Steam Link chains onto it.
 static XrResult wrap_ls(XrSpace space, XrSpace base, XrTime t, XrSpaceLocation *loc) {
     if (!g_ls) g_ls = reinterpret_cast<locatespace_fn>(discover_export("xrLocateSpace"));
     if (!g_ls) return -2;
     XrResult r = g_ls(space, base, t, loc);
     if (r < 0 || !loc) return r;
-    static unsigned calls = 0;                                     // diagnostic: prove the hook is on the hot path
-    if ((calls++ % 2000) == 0)
-        LOGI("xrLocateSpace #%u space=0x%llx (%s) base=%s chain0=%d", calls, (unsigned long long)space,
-             space_name(space), space_name(base), loc->next ? *reinterpret_cast<int32_t *>(loc->next) : -1);
-    if (g_view == 0 || space != g_view) return r;                 // only the head (VIEW) space
-    if ((loc->flags & XR_SPACE_LOCATION_POSITION_VALID) == 0) return r;
+    static unsigned calls = 0;
+    if ((calls++ & 0xff) == 0) read_params();                      // re-read the tuning file a few times a second
+    if (g_view == 0) return r;                                     // VIEW space not seen yet -> passthrough
 
+    if (space != g_view) {                                         // not the head: only the eye-gaze fix applies
+        if (g_gaze && find_in_chain(loc->next, XR_TYPE_EYE_GAZE_SAMPLE_TIME_EXT)) {
+            XrSpaceLocation head{}; head.type = XR_TYPE_SPACE_LOCATION;
+            if (g_ls(g_view, base, t, &head) >= 0 && (head.flags & XR_SPACE_LOCATION_POSITION_VALID)) {
+                static unsigned ng = 0;
+                if ((ng++ % 20000) == 0) {
+                    float dx = loc->pose.p.x - head.pose.p.x, dy = loc->pose.p.y - head.pose.p.y,
+                          dz = loc->pose.p.z - head.pose.p.z;
+                    LOGI("gaze fix active: reported eye position was %.3f m from the head",
+                         sqrtf(dx * dx + dy * dy + dz * dz));
+                }
+                loc->pose.p = head.pose.p;
+            }
+        }
+        return r;
+    }
+
+    if ((loc->flags & XR_SPACE_LOCATION_POSITION_VALID) == 0) return r;
     auto *vel = reinterpret_cast<XrSpaceVelocity *>(find_in_chain(loc->next, XR_TYPE_SPACE_VELOCITY));
     if (!vel) return r;                                            // no velocity requested -> nothing to fix
 
-    read_params();
-    static unsigned n = 0;
-    if ((n++ % 200) == 0)
-        LOGI("HEAD in %s lin[%.3f %.3f %.3f] ang[%.3f %.3f %.3f] mode=%d win=%.0fms",
-             space_name(base), vel->lin.x, vel->lin.y, vel->lin.z,
-             vel->ang.x, vel->ang.y, vel->ang.z, g_mode, g_win);
-
     if (g_mode == 1) {                                             // derive linear velocity from positions
+        Vec3 reported = vel->lin;
         XrTime dt = (XrTime)(g_win * 1e6);                        // window in ns
         XrSpaceLocation l2{}; l2.type = XR_TYPE_SPACE_LOCATION;    // no velocity chained -> position only
         XrResult r2 = g_ls(space, base, t + dt, &l2);
@@ -146,6 +176,10 @@ static XrResult wrap_ls(XrSpace space, XrSpace base, XrTime t, XrSpaceLocation *
             vel->lin = { 0, 0, 0 };                               // failed future locate -> zero (as the reference build)
         }
         vel->flags |= XR_SPACE_VELOCITY_LINEAR_VALID;
+        static unsigned n = 0;
+        if ((n++ % 20000) == 0)
+            LOGI("velocity fix active (%s, %.0f ms): reported lin[%.3f %.3f %.3f] -> derived lin[%.3f %.3f %.3f]",
+                 space_name(base), g_win, reported.x, reported.y, reported.z, vel->lin.x, vel->lin.y, vel->lin.z);
     } else if (g_mode == 2) {                                     // comparison: zero linear velocity
         vel->lin = { 0, 0, 0 };
         vel->flags |= XR_SPACE_VELOCITY_LINEAR_VALID;
@@ -242,7 +276,7 @@ static void try_hook() {
         if (b > 0) LOGI("hooked xrCreateReferenceSpace in %s", path);
     }
     fclose(f);
-    if (g_hooked > 0) { g_done = true; LOGI("active: head-velocity fix in place (tune via /data/local/tmp/pico4velfix-corr)"); }
+    if (g_hooked > 0) { g_done = true; LOGI("active: hooked Steam Link xrLocateSpace (tune via /data/local/tmp/pico4velfix-corr)"); }
 }
 static void *watcher(void *) {
     int noxr = 0;

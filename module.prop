@@ -1,6 +1,6 @@
 id=pico4-steamlink-velfix
 name=Pico 4 Steam Link Head-Velocity Fix
-version=v1.1
-versionCode=101
+version=v1.2
+versionCode=102
 author=UbootVRC
-description=Fixes the Steam Link head wobble after recenter by replacing the forwarded head linear velocity with a position-derived one (OpenXR xrLocateSpace hook, derived35 approach). Version-independent: use official Steam Link, no APK patch. Scoped to Steam Link only. Needs Zygisk. Tune via /data/local/tmp/pico4velfix-corr "mode window_ms" (default 1 35; 0=off).
+description=Fixes the Steam Link head wobble on Pico 4 by replacing the forwarded head linear velocity with a position-derived one, and corrects the eye-gaze position used for foveation on headsets with eye tracking. Works on official Steam Link, no APK patch. Scoped to Steam Link only. Needs Zygisk. Tune via /data/local/tmp/pico4velfix-corr "mode window_ms gaze" (default 1 35 1).

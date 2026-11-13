@@ -12,8 +12,9 @@ No proprietary code is reproduced — only symbol names, offsets, behavior, and 
 
 The root-cause measurements and the original app-side fix come from an independent investigation,
 published as a report: <https://github.com/ClaikoCode/Pico4e_steamlink_wobble_gaze_fix_report>. That work was done on a **Pico 4 Enterprise** (firmware 5.13.8, Steam
-Link 2.0.24). The Zygisk module in this repo was tested on a **base Pico 4** (A8110, firmware 5.13.7,
-Steam Link 2.0.25). Where this document and the report disagree, prefer the report: it is the primary
+Link 2.0.24). The Zygisk module in this repo was also tested on a **Pico 4 Enterprise** (firmware
+5.13.7, Steam Link 2.0.25). The Pico 4 Pro shares the Enterprise's hardware and base OS; the regular
+Pico 4 has no eye tracking; neither has been tested. Where this document and the report disagree, prefer the report: it is the primary
 source for the measurements.
 
 ---
@@ -163,8 +164,10 @@ issue that can be corrected without touching firmware.
    experience without per-version patching.
 4. **Residual mild wobble** (fresh boot) and a possible slight stutter on fast head movement: the
    cause of each is not established (see §2). PC-side HMD prediction = 0 helps the mild cases only.
-5. **Other Pico models:** on the Pico 4 Pro and Ultra, Steam Link adds a head-offset term to the
-   linear velocity after reading it, so a derived velocity may count that offset twice. Untested.
+5. **Other Pico models:** only the Pico 4 Enterprise has been tested. The report notes that on the
+   Pico 4 Pro and Ultra, Steam Link adds a head-offset term to the linear velocity after reading it,
+   so a derived velocity may count that offset twice. The Ultra no longer needs the fix on current
+   firmware (see §1).
 
 ---
 

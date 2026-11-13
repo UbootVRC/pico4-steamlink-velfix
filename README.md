@@ -7,7 +7,16 @@ no re-signing, and nothing to redo when Steam Link updates.
 On headsets with eye tracking it also corrects where Steam Link aims its foveation when you tilt
 your head (new in v1.2).
 
-Tested on a base Pico 4 (A8110), firmware 5.13.7, official Steam Link 2.0.25.
+Tested on a Pico 4 Enterprise, firmware 5.13.7, official Steam Link 2.0.25.
+
+## Which headsets
+
+| Headset | Eye tracking | Status |
+| --- | --- | --- |
+| Pico 4 Enterprise | Yes | Tested. Both fixes work. |
+| Pico 4 Pro | Yes | Untested. Same hardware and base OS as the Enterprise, so both fixes are expected to apply. See the note under Limits. |
+| Pico 4 | No | Untested. The wobble has been reported there and the velocity fix does not depend on eye tracking, so it should apply. The gaze fix does nothing. |
+| Pico 4 Ultra | No | Not needed on current firmware: Pico fixed the wobble in an OS update. Untested on older firmware. |
 
 ## What it fixes
 
@@ -44,13 +53,15 @@ See [FINDINGS.md](FINDINGS.md) for the analysis and how the module was debugged.
 - A milder wobble that exists on a fresh boot may remain. Its cause is not established.
 - The velocity fix may add a slight stutter on fast head movement. This has been reported but not
   confirmed.
-- **Pico 4 Pro and Ultra are untested.** On those models Steam Link adds its own head-offset term to
-  the linear velocity, and a derived velocity may count that offset twice.
+- **Only the Pico 4 Enterprise has been tested.** ClaikoCode's report notes that on the Pico 4 Pro
+  and Ultra, Steam Link adds its own head-offset term to the linear velocity, and a derived velocity
+  may count that offset twice. If the wobble looks worse with the module on one of those, compare
+  against mode `0` and please open an issue.
 - The gaze fix is new and has had little testing.
 
 ## Requirements
 
-- A rooted Pico 4 with Magisk (or another root solution that provides Zygisk)
+- A rooted Pico 4 family headset with Magisk (or another root solution that provides Zygisk)
 - Zygisk enabled
 - The official Steam Link app (`com.valvesoftware.steamlinkvr`)
 

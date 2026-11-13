@@ -106,3 +106,7 @@ This compiles `jni/module.cpp` to `zygisk/arm64-v8a.so` and packages a flashable
   [ClaikoCode](https://github.com/ClaikoCode), published as
   [Steam Link on Pico 4 Enterprise: head wobble and misplaced foveation](https://github.com/ClaikoCode/Pico4e_steamlink_wobble_gaze_fix_report).
 - `jni/zygisk.hpp` is the Zygisk API header by topjohnwu (licence in the file).
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). `jni/zygisk.hpp` keeps its own licence, stated in the file.
